@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="de" translate="no" class="notranslate">
+<head>
+<meta charset="utf-8">
+<meta name="google" content="notranslate">
+<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+<title>DJBOX</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header id="top">
+  <canvas id="logo" width="90" height="21"></canvas>
+  <span class="sep"></span>
+  <span id="st-lib">LIB —</span>
+  <span id="st-midi">MIDI —</span>
+  <span id="st-temp">—°</span>
+  <span class="grow"></span>
+  <div id="master-meter"><i></i><i></i></div>
+  <button id="btn-auto" class="tog">AUTO</button>
+  <button id="btn-settings">SET</button>
+  <canvas id="clock" width="80" height="21"></canvas>
+</header>
+
+<section id="decks">
+  <div class="deck" id="deckA" data-deck="A"></div>
+  <div id="mixer">
+    <div class="ch" data-deck="A">
+      <div class="knob" data-ctl="hiA" data-label="HI"></div>
+      <div class="knob" data-ctl="midA" data-label="MID"></div>
+      <div class="knob" data-ctl="loA" data-label="LO"></div>
+      <div class="knob" data-ctl="filterA" data-label="FLT"></div>
+      <div class="fader-wrap"><div class="meter" data-meter="A"><i></i></div><div class="vfader" data-ctl="volA"></div></div>
+    </div>
+    <div class="ch" data-deck="B">
+      <div class="knob" data-ctl="hiB" data-label="HI"></div>
+      <div class="knob" data-ctl="midB" data-label="MID"></div>
+      <div class="knob" data-ctl="loB" data-label="LO"></div>
+      <div class="knob" data-ctl="filterB" data-label="FLT"></div>
+      <div class="fader-wrap"><div class="vfader" data-ctl="volB"></div><div class="meter" data-meter="B"><i></i></div></div>
+    </div>
+    <div class="xfade-wrap"><span>A</span><div class="hfader" data-ctl="xfader"></div><span>B</span></div>
+  </div>
+  <div class="deck" id="deckB" data-deck="B"></div>
+</section>
+
+<section id="browser">
+  <nav id="crates"></nav>
+  <div id="view">
+    <div id="grid"></div>
+    <div id="list" hidden></div>
+    <div id="az"></div>
+  </div>
+</section>
+
+<div id="album" class="overlay" hidden></div>
+<div id="search" class="overlay" hidden>
+  <div class="ov-head"><div id="q" class="input"></div><button data-close>×</button></div>
+  <div id="results"></div>
+  <div id="kbd"></div>
+</div>
+<div id="settings" class="overlay" hidden></div>
+<div id="toast" hidden></div>
+
+<template id="deck-tpl">
+  <div class="d-head">
+    <span class="d-name"></span><span class="d-state">EMPTY</span><span class="grow"></span>
+    <canvas class="d-bpm" width="100" height="21"></canvas><span class="d-unit">BPM</span>
+  </div>
+  <div class="d-info">
+    <div class="d-cover"></div>
+    <div class="d-text">
+      <div class="d-title">—</div>
+      <div class="d-artist">&nbsp;</div>
+      <div class="d-nums"><canvas class="d-time" width="100" height="21"></canvas><canvas class="d-pitch" width="80" height="21"></canvas></div>
+    </div>
+  </div>
+  <canvas class="d-zoom" width="500" height="64"></canvas>
+  <canvas class="d-over" width="500" height="20"></canvas>
+  <div class="d-ctrl">
+    <button class="b-cue">CUE</button>
+    <button class="b-play">▶</button>
+    <button class="b-sync tog">SYNC</button>
+    <button class="b-nudge" data-n="-1">◀</button>
+    <div class="hfader tempo" data-ctl=""></div>
+    <button class="b-nudge" data-n="1">▶</button>
+  </div>
+</template>
+
+<script src="app.js"></script>
+</body>
+</html>

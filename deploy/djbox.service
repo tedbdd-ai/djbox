@@ -1,0 +1,12 @@
+[Unit]
+Description=DJBOX Server (Sammlung, Audio, MIDI)
+After=network-online.target
+
+[Service]
+ExecStart=/usr/bin/python3 %h/djbox/server.py
+Restart=always
+RestartSec=3
+Nice=5
+
+[Install]
+WantedBy=default.target
