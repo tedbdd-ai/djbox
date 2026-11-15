@@ -423,6 +423,7 @@ function renderView() {
     const card = h('div', { class: 'al', onclick: () => openAlbum(a.id) }, cv, h('div', { class: 't' }, a.title), h('div', { class: 'a' }, a.artist));
     if (view === 'ALL' || view === 'NEW') cv.append(h('span', { class: 'badge' }, a.crate));
     lazyCover(cv, a);
+    makeDraggable(card, () => lib.tracks[a.tracks[0]]);
     if (!letters.has(key)) letters.set(key, card);
     grid.append(card);
   }
@@ -453,6 +454,7 @@ function trackRow(t, n, { remove } = {}) {
     loadBtn('A', t), loadBtn('B', t),
     remove ? h('button', { onclick: remove }, '×') : h('button', { onclick: e => { addQueue(t.id); e.target.classList.add('on'); setTimeout(() => e.target.classList.remove('on'), 400); } }, '+Q'));
   if ([decks.A.track?.id, decks.B.track?.id].includes(t.id)) row.classList.add('loaded');
+  makeDraggable(row, () => t);
   return row;
 }
 function loadBtn(id, t) {
@@ -468,6 +470,70 @@ function loadBtn(id, t) {
     },
   }, id);
 }
+function loadInto(d, t) {
+  if (!t) return;
+  if (d.audible) { toast(`DECK ${d.id} LÄUFT — ERST STOPPEN`); return; }
+  d.load(t); toast(`→ DECK ${d.id}: ${t.title}`, 1200);
+}
+
+/* Tracks/Alben per Finger oder Maus direkt auf ein Deck ziehen */
+let dragState = null;
+function makeDraggable(el, getTrack) {
+  let st = null;
+  const startDrag = e => {
+    const t = getTrack();
+    if (!t || !st) return;
+    st.on = true; el._dragged = true;
+    try { el.setPointerCapture(st.id); } catch {}
+    const g = h('div', { class: 'ghost' }, h('b', {}, t.title), h('small', {}, t.artist || ''));
+    document.body.append(g);
+    dragState = { ghost: g };
+    document.body.classList.add('dragging');
+    moveGhost(e);
+  };
+  el.addEventListener('pointerdown', e => {
+    if (e.button > 0 || e.target.closest('button')) return;
+    st = { id: e.pointerId, x: e.clientX, y: e.clientY, on: false, touch: e.pointerType !== 'mouse', timer: null };
+    if (st.touch) st.timer = setTimeout(() => st && startDrag(e), 280); // Halten = ziehen, Wischen = scrollen
+  });
+  el.addEventListener('pointermove', e => {
+    if (!st || e.pointerId !== st.id) return;
+    if (!st.on) {
+      const d = Math.hypot(e.clientX - st.x, e.clientY - st.y);
+      if (st.touch) { if (d > 10) { clearTimeout(st.timer); st = null; } return; } // Scrollgeste
+      if (d < 8) return;
+      startDrag(e);
+    }
+    if (st?.on) moveGhost(e);
+  });
+  el.addEventListener('pointerup', e => {
+    if (!st || e.pointerId !== st.id) return;
+    clearTimeout(st.timer);
+    const was = st.on; st = null;
+    if (was) finishDrag(e, getTrack());
+  });
+  el.addEventListener('pointercancel', () => { clearTimeout(st?.timer); if (st?.on) endDragUi(); st = null; });
+  // nach einem Drag keinen Klick auslösen
+  el.addEventListener('click', e => { if (el._dragged) { e.stopImmediatePropagation(); e.preventDefault(); el._dragged = false; } }, true);
+}
+document.addEventListener('touchmove', e => { if (dragState) e.preventDefault(); }, { passive: false });
+function deckAt(x, y) { return document.elementFromPoint(x, y)?.closest('.deck') || null; }
+function moveGhost(e) {
+  dragState.ghost.style.transform = `translate(${e.clientX + 14}px, ${e.clientY + 14}px)`;
+  const dk = deckAt(e.clientX, e.clientY);
+  $$('.deck').forEach(d => d.classList.toggle('drop', d === dk));
+}
+function endDragUi() {
+  dragState?.ghost.remove(); dragState = null;
+  document.body.classList.remove('dragging');
+  $$('.deck.drop').forEach(d => d.classList.remove('drop'));
+}
+function finishDrag(e, t) {
+  const dk = deckAt(e.clientX, e.clientY);
+  endDragUi();
+  if (dk && t) loadInto(decks[dk.dataset.deck], t);
+}
+
 function markLoaded() {
   const ids = [decks.A.track?.id, decks.B.track?.id];
   $$('.tr[data-tid]').forEach(r => r.classList.toggle('loaded', ids.includes(r.dataset.tid)));
