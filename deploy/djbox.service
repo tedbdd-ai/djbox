@@ -3,6 +3,7 @@ Description=DJBOX Server (Sammlung, Audio, MIDI)
 After=network-online.target
 
 [Service]
+EnvironmentFile=-%h/.config/djbox/env
 ExecStart=/usr/bin/python3 %h/djbox/server.py
 Restart=always
 RestartSec=3

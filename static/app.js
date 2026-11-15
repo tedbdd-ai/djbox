@@ -1,4 +1,5 @@
 'use strict';
+if (new URLSearchParams(location.search).has('kiosk')) document.body.classList.add('kiosk');
 /* DJBOX – Oberfläche. Zwei Decks, Mixer, Plattenkisten, Automix, MIDI-Learn. */
 
 const $ = (s, r = document) => r.querySelector(s);

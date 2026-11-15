@@ -10,8 +10,9 @@
 }
 * { box-sizing: border-box; -webkit-user-select: none; user-select: none; -webkit-tap-highlight-color: transparent; }
 html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg); overflow: hidden; }
-body { font: 13px/1.25 var(--font); letter-spacing: .06em; text-transform: uppercase; display: flex; flex-direction: column; cursor: none; }
-body.cursor { cursor: default; }
+body { font: 13px/1.25 var(--font); letter-spacing: .06em; text-transform: uppercase; display: flex; flex-direction: column; }
+body.kiosk { cursor: none; }
+body.kiosk.cursor { cursor: default; }
 button {
   font: inherit; letter-spacing: inherit; color: var(--fg); background: transparent;
   border: 1px solid var(--faint); border-radius: 2px; padding: 0 12px; height: 44px; min-width: 44px;

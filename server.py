@@ -18,12 +18,18 @@ import subprocess
 import threading
 import time
 import urllib.parse
+import urllib.request
 from concurrent.futures import ThreadPoolExecutor
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 MUSIC_ROOT = os.environ.get("DJBOX_MUSIC", "/mnt/musik")
 HOST = os.environ.get("DJBOX_HOST", "127.0.0.1")
 PORT = int(os.environ.get("DJBOX_PORT", "8765"))
+# Optional: Bibliothek von einem Navidrome/Subsonic-Server statt aus dem Dateisystem
+ND_URL = os.environ.get("DJBOX_NAVIDROME_URL", "").rstrip("/")
+ND_USER = os.environ.get("DJBOX_NAVIDROME_USER", "")
+ND_PASS = os.environ.get("DJBOX_NAVIDROME_PASS", "")
+REMOTE = bool(ND_URL)
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
 STATIC = os.path.join(APP_DIR, "static")
 CACHE = os.path.expanduser("~/.cache/djbox")
@@ -31,6 +37,7 @@ CONF_DIR = os.path.expanduser("~/.config/djbox")
 COVER_DIR = os.path.join(CACHE, "covers")
 AUDIO_DIR = os.path.join(CACHE, "audio")
 ANALYSIS_DIR = os.path.join(CACHE, "analysis")
+REMOTE_DIR = os.path.join(CACHE, "remote")  # Originaldateien vom Navidrome
 LIB_FILE = os.path.join(CACHE, "library.json")
 SETTINGS_FILE = os.path.join(CONF_DIR, "settings.json")
 AUDIO_CACHE_LIMIT = 15 * 1024**3  # 15 GB für umgewandelte AIFF-Dateien
@@ -44,7 +51,7 @@ MIME = {".mp3": "audio/mpeg", ".flac": "audio/flac", ".wav": "audio/wav", ".m4a"
         ".css": "text/css; charset=utf-8", ".json": "application/json", ".jpg": "image/jpeg",
         ".svg": "image/svg+xml", ".png": "image/png", ".woff2": "font/woff2"}
 
-for d in (COVER_DIR, AUDIO_DIR, ANALYSIS_DIR, CONF_DIR):
+for d in (COVER_DIR, AUDIO_DIR, ANALYSIS_DIR, REMOTE_DIR, CONF_DIR):
     os.makedirs(d, exist_ok=True)
 
 
@@ -54,6 +61,47 @@ def hid(s):
 
 def nice_cmd(cmd):
     return ["nice", "-n", "12"] + cmd
+
+
+# ───────────────────────── Navidrome (Subsonic-API) ─────────────────────────
+def nd_url(endpoint, **params):
+    salt = os.urandom(6).hex()
+    q = {"u": ND_USER, "t": hashlib.md5((ND_PASS + salt).encode()).hexdigest(), "s": salt,
+         "v": "1.16.1", "c": "djbox", "f": "json", **params}
+    return f"{ND_URL}/rest/{endpoint}.view?" + urllib.parse.urlencode(q)
+
+
+def nd_json(endpoint, **params):
+    with urllib.request.urlopen(nd_url(endpoint, **params), timeout=60) as r:
+        resp = json.load(r)["subsonic-response"]
+    if resp.get("status") != "ok":
+        raise RuntimeError(resp.get("error", {}).get("message", "Subsonic-Fehler"))
+    return resp
+
+
+def nd_download(endpoint, dest, **params):
+    """Lädt eine Ressource atomar nach dest (falls noch nicht vorhanden)."""
+    if os.path.exists(dest):
+        return dest
+    tmp = dest + ".tmp"
+    with urllib.request.urlopen(nd_url(endpoint, **params), timeout=120) as r, open(tmp, "wb") as f:
+        if "json" in r.headers.get("Content-Type", ""):  # Fehlerantwort statt Datei
+            raise RuntimeError("Navidrome lieferte keine Datei")
+        shutil.copyfileobj(r, f)
+    os.replace(tmp, dest)
+    return dest
+
+
+def track_src(t):
+    """Lokaler Dateipfad eines Tracks (Remote: Original wird in den Cache geladen)."""
+    if not REMOTE:
+        return os.path.join(MUSIC_ROOT, t["rel"])
+    dest = os.path.join(REMOTE_DIR, t["id"] + "." + (t["ext"] or "bin"))
+    try:
+        return nd_download("stream", dest, id=t["sid"], format="raw")
+    except Exception as e:
+        print("download error:", e, flush=True)
+        return None
 
 
 # ───────────────────────── Library ─────────────────────────
@@ -67,8 +115,12 @@ class Library:
         try:
             with open(LIB_FILE) as f:
                 data = json.load(f)
-            self._probe_cache = data.get("probe", {})
-            self._build(self._probe_cache_entries())
+            if REMOTE:
+                r = data.get("remote", {})
+                self.tracks, self.albums = r.get("tracks", {}), r.get("albums", {})
+            else:
+                self._probe_cache = data.get("probe", {})
+                self._build(self._probe_cache_entries())
         except Exception:
             pass
 
@@ -162,6 +214,74 @@ class Library:
             self.status["updated"] = int(time.time())
             threading.Thread(target=prefetch_covers, daemon=True).start()
 
+    def scan_remote(self):
+        if self.status["scanning"]:
+            return
+        self.status.update(scanning=True, done=0, total=0)
+        try:
+            albums_raw, offset = [], 0
+            while True:
+                lst = nd_json("getAlbumList2", type="alphabeticalByName", size=500, offset=offset)
+                chunk = lst.get("albumList2", {}).get("album", [])
+                albums_raw += chunk
+                if len(chunk) < 500:
+                    break
+                offset += 500
+            self.status["total"] = len(albums_raw)
+            tracks, albums = {}, {}
+
+            def fetch(a):
+                return nd_json("getAlbum", id=a["id"]).get("album", {})
+
+            with ThreadPoolExecutor(4) as ex:
+                for i, al in enumerate(ex.map(fetch, albums_raw)):
+                    self.status["done"] += 1
+                    songs = al.get("song", [])
+                    if not songs:
+                        continue
+                    aid = hid("nd:" + al["id"])
+                    paths = [x.get("path", "") for x in songs]
+                    folder = os.path.dirname(paths[0])
+                    parts = paths[0].split("/")
+                    crate = parts[0] if len(parts) > 2 else "—"
+                    a = albums[aid] = {
+                        "id": aid, "nid": al["id"], "folder": folder, "crate": crate,
+                        "title": al.get("name") or "", "artist": al.get("artist") or "",
+                        "year": str(al["year"]) if al.get("year") else None,
+                        "genres": sorted({g.get("name") for g in al.get("genres", []) if g.get("name")}
+                                         or ({al["genre"]} if al.get("genre") else set())),
+                        "tracks": [], "added": 0,
+                    }
+                    try:
+                        a["added"] = int(time.mktime(time.strptime(al["created"][:19], "%Y-%m-%dT%H:%M:%S")))
+                    except Exception:
+                        pass
+                    for x in sorted(songs, key=lambda x: (x.get("discNumber") or 1, x.get("track") or 999)):
+                        rel = x.get("path") or x["id"]
+                        t = {
+                            "id": hid("nd:" + x["id"]), "sid": x["id"], "rel": rel, "album": aid, "crate": crate,
+                            "title": x.get("title") or "", "artist": x.get("artist") or "",
+                            "genre": x.get("genre") or "", "bpm": x.get("bpm") or None, "key": None,
+                            "track": x.get("track"), "duration": x.get("duration") or 0,
+                            "ext": (x.get("suffix") or os.path.splitext(rel)[1].lstrip(".")).lower(),
+                            "art": bool(x.get("coverArt")), "file": os.path.basename(rel),
+                        }
+                        tracks[t["id"]] = t
+                        a["tracks"].append(t["id"])
+                    if i % 100 == 99:
+                        with self.lock:
+                            self.tracks, self.albums = dict(tracks), dict(albums)
+            with self.lock:
+                self.tracks, self.albums = tracks, albums
+            tmp = LIB_FILE + ".tmp"
+            with open(tmp, "w") as f:
+                json.dump({"remote": {"tracks": tracks, "albums": albums}}, f)
+            os.replace(tmp, LIB_FILE)
+        finally:
+            self.status["scanning"] = False
+            self.status["updated"] = int(time.time())
+            threading.Thread(target=prefetch_covers, daemon=True).start()
+
     @staticmethod
     def split_name(name):
         m = re.split(r"\s+[-–—]\s+", name, maxsplit=1)
@@ -237,6 +357,12 @@ def make_cover(aid):
     a = LIB.albums.get(aid)
     if not a:
         return None
+    if REMOTE:
+        try:
+            with _cover_sem:
+                return nd_download("getCoverArt", out, id=a["nid"], size=400)
+        except Exception:
+            return None
     src = None
     folder = os.path.join(MUSIC_ROOT, a["folder"])
     try:
@@ -284,8 +410,10 @@ def audio_file(tid, force_tc=False):
     t = LIB.tracks.get(tid)
     if not t:
         return None, None
-    src = os.path.join(MUSIC_ROOT, t["rel"])
-    ext = os.path.splitext(src)[1].lower()
+    src = track_src(t)
+    if not src:
+        return None, None
+    ext = "." + t["ext"] if REMOTE else os.path.splitext(src)[1].lower()
     if ext in NATIVE_EXT and not force_tc:
         return src, MIME[ext]
     out = os.path.join(AUDIO_DIR, tid + ".flac")
@@ -381,7 +509,9 @@ def analyze(tid):
         if os.path.exists(out):
             with open(out) as f:
                 return json.load(f)
-        src, _ = audio_file(tid) if t["ext"] in ("aif", "aiff", "aifc") else (os.path.join(MUSIC_ROOT, t["rel"]), None)
+        src, _ = audio_file(tid) if t["ext"] in ("aif", "aiff", "aifc") else (track_src(t), None)
+        if not src:
+            return None
         a = decode(src, 4000)
         n = 4000
         peaks = []
@@ -459,7 +589,10 @@ def midi_loop():
         now = time.time()
         if now - last_scan > 2:
             last_scan = now
-            present = {os.path.join("/dev/snd", f) for f in os.listdir("/dev/snd") if f.startswith("midiC")}
+            try:
+                present = {os.path.join("/dev/snd", f) for f in os.listdir("/dev/snd") if f.startswith("midiC")}
+            except OSError:  # kein ALSA (z. B. macOS): kein USB-MIDI
+                present = set()
             open_paths = {v[0] for v in fds.values()}
             for p in present - open_paths:
                 try:
@@ -604,7 +737,7 @@ class H(BaseHTTPRequestHandler):
             save_settings(s)
             return self.send_json(s)
         if p == "/api/rescan":
-            threading.Thread(target=LIB.scan, daemon=True).start()
+            threading.Thread(target=LIB.scan_remote if REMOTE else LIB.scan, daemon=True).start()
             return self.send_json({"ok": True})
         if p.startswith("/api/prepare/"):
             tid = p.rsplit("/", 1)[1]
@@ -649,9 +782,9 @@ def cpu_temp():
 
 def periodic_scan():
     while True:
-        if os.path.isdir(MUSIC_ROOT):
+        if REMOTE or os.path.isdir(MUSIC_ROOT):
             try:
-                LIB.scan()
+                LIB.scan_remote() if REMOTE else LIB.scan()
             except Exception as e:
                 print("scan error:", e, flush=True)
         time.sleep(1800)
@@ -664,5 +797,5 @@ if __name__ == "__main__":
     threading.Thread(target=midi_loop, daemon=True).start()
     srv = ThreadingHTTPServer((HOST, PORT), H)
     srv.daemon_threads = True
-    print(f"DJBOX läuft auf http://{HOST}:{PORT}  (Musik: {MUSIC_ROOT})", flush=True)
+    print(f"DJBOX läuft auf http://{HOST}:{PORT}  (Musik: {ND_URL if REMOTE else MUSIC_ROOT})", flush=True)
     srv.serve_forever()

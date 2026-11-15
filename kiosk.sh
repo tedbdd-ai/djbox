@@ -1,9 +1,10 @@
 #!/bin/bash
 # Startet die DJBOX-Oberfläche im Vollbild. Läuft per Autostart nach dem Login.
 URL=http://127.0.0.1:8765/
+KIOSK_URL="$URL?kiosk"
 for i in $(seq 1 60); do curl -sf -o /dev/null "$URL" && break; sleep 1; done
 while true; do
-  chromium --kiosk --app="$URL" \
+  chromium --kiosk --app="$KIOSK_URL" \
     --user-data-dir="$HOME/.config/djbox/chromium" \
     --ozone-platform=wayland --noerrdialogs --disable-infobars --no-first-run \
     --autoplay-policy=no-user-gesture-required --password-store=basic \

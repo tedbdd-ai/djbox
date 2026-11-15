@@ -16,3 +16,15 @@ Selbsttest: Oberfläche mit `?selftest` öffnen, Ergebnis steht im Browser-Log.
 
 Lokal auf dem Mac testen: `DJBOX_MUSIC=/Volumes/files/media/music_plex python3 server.py`
 (braucht ffmpeg, z. B. `brew install ffmpeg`), dann http://127.0.0.1:8765 öffnen.
+
+## Bibliothek von Navidrome
+
+Statt `/mnt/musik` kann DJBOX die Sammlung über die Subsonic-API eines Navidrome laden.
+Audio und Cover werden beim ersten Laden in `~/.cache/djbox` zwischengespeichert.
+
+```
+DJBOX_NAVIDROME_URL=https://nvdrme.duckdns.org \
+DJBOX_NAVIDROME_USER=… DJBOX_NAVIDROME_PASS=… python3 server.py
+```
+
+Auf dem Pi die drei Variablen in `~/.config/djbox/env` ablegen (nicht ins Repo).
